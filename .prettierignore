@@ -1,0 +1,11 @@
+node_modules
+neo4j-data
+dist
+.git
+.cache
+*.min.js
+coverage
+node_modules/**
+neo4j-data/**
+dist/**
+package-lock.json

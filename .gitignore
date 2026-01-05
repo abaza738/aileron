@@ -1,0 +1,4 @@
+.env*
+/node_modules
+/dist
+/neo4j-data

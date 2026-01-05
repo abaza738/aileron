@@ -1,0 +1,53 @@
+services:
+  neo4j:
+    image: neo4j:5-community
+    container_name: neo4j
+    ports:
+      - '7474:7474' # HTTP (Browser)
+      - '7687:7687' # Bolt (Driver)
+    environment:
+      - NEO4J_AUTH=neo4j/${NEO4J_PASSWORD:-password123}
+    volumes:
+      - neo4j_data:/data
+      - neo4j_logs:/logs
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'cypher-shell',
+          '-u',
+          'neo4j',
+          '-p',
+          '${NEO4J_PASSWORD:-password123}',
+          'MATCH () RETURN count(*) limit 1',
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - aileron
+
+  app:
+    build: .
+    container_name: aileron-app
+    ports:
+      - '3000:3000'
+    environment:
+      - NODE_ENV=production
+    env_file:
+      - .env.docker
+    depends_on:
+      neo4j:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - aileron
+
+volumes:
+  neo4j_data:
+  neo4j_logs:
+
+networks:
+  aileron:
+    driver: bridge
