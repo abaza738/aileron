@@ -1,0 +1,19 @@
+{$DOMAIN} {
+  encode gzip
+
+  @api {
+    path /v1/*
+  }
+
+  reverse_proxy @api app:3000 {
+    transport http {
+      read_timeout 30s
+      write_timeout 30s
+    }
+  }
+
+  handle_path / {
+    respond "Aileron API" 200
+  }
+}
+

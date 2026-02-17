@@ -24,6 +24,7 @@ export default defineConfig([
     '**/coverage',
     '**/*.min.js',
     '**/package-lock.json',
+    '**/eslint.config.js',
   ]),
   {
     extends: compat.extends(

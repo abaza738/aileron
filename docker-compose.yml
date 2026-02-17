@@ -3,8 +3,8 @@ services:
     image: neo4j:5-community
     container_name: neo4j
     ports:
-      - '7474:7474' # HTTP (Browser)
-      - '7687:7687' # Bolt (Driver)
+      - '127.0.0.1:7474:7474' # HTTP (Browser, local/VPS only)
+      - '127.0.0.1:7687:7687' # Bolt (Driver, local/VPS only)
     environment:
       - NEO4J_AUTH=neo4j/${NEO4J_PASSWORD:-password123}
     volumes:
@@ -31,8 +31,6 @@ services:
   app:
     build: .
     container_name: aileron-app
-    ports:
-      - '3000:3000'
     environment:
       - NODE_ENV=production
     env_file:
@@ -44,9 +42,29 @@ services:
     networks:
       - aileron
 
+  caddy:
+    image: caddy:2
+    container_name: aileron-caddy
+    restart: unless-stopped
+    ports:
+      - '80:80'
+      - '443:443'
+    environment:
+      - DOMAIN=${DOMAIN:-localhost}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - app
+    networks:
+      - aileron
+
 volumes:
   neo4j_data:
   neo4j_logs:
+  caddy_data:
+  caddy_config:
 
 networks:
   aileron:

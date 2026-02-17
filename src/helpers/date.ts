@@ -6,7 +6,8 @@ export function getDayOfWeek(dateString: string): string {
   return daysOfWeek[dayIndex]
 }
 
-export function getNextFlightDates(departureDate: string, serviceDays: string[]): string[] {
+/** Returns [date] if date's day is in serviceDays, else []. */
+export function getFlightsOnDate(departureDate: string, serviceDays: string[]): string[] {
   const date = new Date(departureDate)
   const dayIndex = date.getUTCDay()
   const dayName = daysOfWeek[dayIndex]
