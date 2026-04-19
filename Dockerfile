@@ -26,8 +26,9 @@ COPY package*.json ./
 # Install only production dependencies
 RUN npm ci --only=production
 
-# Copy built app
+# Copy built app and CSV assets (resolved at runtime relative to dist/)
 COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/src/assets ./dist/assets
 
 # Create non-root user
 RUN addgroup -g 1001 -S nodejs

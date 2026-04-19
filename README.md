@@ -1,61 +1,76 @@
 # Aileron
 
-Flights API for Aileron website.
+Flight search API for the Aileron website. Supports one-way and roundtrip searches with direct and one-stop itineraries, driven by a static CSV timetable loaded into memory at startup — no database required.
 
-## API versioning
+## Endpoints
 
-Routes are prefixed with `/v1` (e.g. `GET /v1/flights`, `GET /v1/status`). The v1 API may gain new response fields over time; existing fields will not be removed without introducing a new version.
+All routes are prefixed with `/api`.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/flights` | Search flights |
+| `GET` | `/api/status` | Health check |
+| `GET` | `/api/docs` | Interactive API documentation (Scalar) |
+
+### Flight search query parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `departure_airport` | string | yes | Origin ICAO code (e.g. `NZCH`) |
+| `arrival_airport` | string | yes | Destination ICAO code (e.g. `NZQN`) |
+| `type` | `one-way` \| `roundtrip` | yes | Trip type |
+| `departure_date` | string | yes | ISO date (e.g. `2026-01-12`) |
+| `return_date` | string | if roundtrip | ISO date for return leg |
 
 ## Prerequisites
 
-- Node.js (v18+)
-- Docker and Docker Compose (for running Neo4j and the app in containers)
+- Node.js v18+
+- Docker and Docker Compose (for containerised deployment)
 
 ## Environment variables
 
-| Variable        | Description                    |
-| --------------- | ------------------------------ |
-| `NEO4J_URI`     | Neo4j Bolt URI (e.g. `bolt://localhost:7687`) |
-| `NEO4J_USER`    | Neo4j username                 |
-| `NEO4J_PASSWORD`| Neo4j password                 |
-| `PORT`          | Server port (default `3000`)   |
-| `NODE_ENV`      | `development` or `production` |
+| Variable | Description |
+|----------|-------------|
+| `PORT` | Server port (default `3000`) |
+| `NODE_ENV` | `development` or `production` (default `development`) |
+| `HOST` | Host to bind to (default `127.0.0.1`) |
+| `DOMAIN` | Public domain name, used by Caddy for TLS (e.g. `api.yourdomain.com`) |
 
-## Local run
+## Local development
 
 ```bash
 npm install
-npm run build
+npm run dev        # tsx watch mode, hot reload
 ```
 
-Create a `.env` file (or export the variables above), then:
+## Production build
 
 ```bash
-npm start
+npm run build      # compiles TypeScript → dist/ and copies CSV assets
+npm start          # runs dist/index.js
 ```
 
-For development with watch mode:
+## Docker (with Caddy reverse proxy)
 
 ```bash
-npm run dev
+DOMAIN=yourdomain.com docker compose up -d
 ```
 
-## Docker
+Caddy automatically provisions and renews a TLS certificate for `DOMAIN`. No `.env.docker` file is needed unless you want to override `PORT` or `HOST`.
 
-Start Neo4j and the app:
+## Deployment
+
+Deployments are triggered by pushing a semver tag. The workflow SSHs into your VPS and checks out that exact tag before rebuilding:
 
 ```bash
-docker-compose up -d
+git tag v1.0.0
+git push origin v1.0.0
 ```
 
-Ensure `.env.docker` (or your env file) sets `NEO4J_URI`, `NEO4J_USER`, and `NEO4J_PASSWORD` so the app can connect to the Neo4j service. The compose stack uses `NEO4J_AUTH=neo4j/${NEO4J_PASSWORD:-password123}`, so set `NEO4J_URI=bolt://neo4j:7687`, `NEO4J_USER=neo4j`, and `NEO4J_PASSWORD` to match.
+The workflow file is at `.github/workflows/deploy.yml`. Add `VPS_HOST`, `VPS_USER`, and `VPS_SSH_KEY` to your repository secrets (Settings → Secrets).
 
-## Seeding the database
-
-Load airports and flights from CSV into Neo4j:
+## Testing
 
 ```bash
-npm run seed
+npm test
 ```
-
-The seed script uses the same env vars as the app. Run it against the same Neo4j instance the app uses (e.g. from the host with `NEO4J_URI=bolt://localhost:7687` when Neo4j is exposed, or from inside a container that can reach the `neo4j` service).

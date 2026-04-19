@@ -18,7 +18,6 @@ export default defineConfig([
   globalIgnores([
     '**/node_modules',
     '**/dist',
-    '**/neo4j-data',
     '**/.cache',
     '**/.git',
     '**/coverage',

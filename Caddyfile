@@ -2,7 +2,7 @@
   encode gzip
 
   @api {
-    path /v1/*
+    path /api/*
   }
 
   reverse_proxy @api app:3000 {
