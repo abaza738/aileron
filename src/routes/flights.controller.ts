@@ -16,22 +16,16 @@ export const flightsController: FastifyPluginAsyncTypebox = async (fastify) => {
       })
     }
 
-    const session = fastify.neo4j.session()
-    try {
-      if (request.query.type === 'roundtrip') {
-        const outboundFilters = { ...request.query }
-        const returnFilters = {
-          departure_airport: request.query.arrival_airport,
-          arrival_airport: request.query.departure_airport,
-          departure_date: request.query.return_date!,
-        }
-        return await getFlightsRoundtrip(outboundFilters, returnFilters, session)
-      } else {
-        return await getFlightsOneWay(request.query, session)
+    if (request.query.type === 'roundtrip') {
+      const returnFilters = {
+        departure_airport: request.query.arrival_airport,
+        arrival_airport: request.query.departure_airport,
+        departure_date: request.query.return_date!,
       }
-    } finally {
-      await session.close()
+      return getFlightsRoundtrip(request.query, returnFilters)
     }
+
+    return getFlightsOneWay(request.query)
   })
 }
 

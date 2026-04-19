@@ -7,11 +7,11 @@
   "type": "module",
   "dependencies": {
     "@fastify/cors": "^11.2.0",
+    "@fastify/swagger": "^9.7.0",
     "@fastify/type-provider-typebox": "^6.1.0",
+    "@scalar/fastify-api-reference": "^1.52.3",
     "dotenv": "^17.2.3",
     "fastify": "^5.6.2",
-    "fastify-plugin": "^5.0.0",
-    "neo4j-driver": "^6.0.1",
     "typebox": "^1.0.70"
   },
   "devDependencies": {
@@ -33,9 +33,9 @@
   },
   "scripts": {
     "build": "tsc",
+    "postbuild": "node -e \"require('fs').cpSync('src/assets', 'dist/assets', {recursive: true})\"",
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
-    "seed": "tsx src/seed.ts",
     "lint": "eslint --ext .ts,.tsx,.js,.jsx --fix .",
     "lint:ci": "eslint --ext .ts,.tsx,.js,.jsx . --max-warnings=0",
     "format": "prettier --write .",

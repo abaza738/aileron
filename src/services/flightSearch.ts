@@ -1,236 +1,136 @@
-import neo4j from 'neo4j-driver'
-import type { Session } from 'neo4j-driver'
-import { ListFlightsQueryParams } from '../types/flights.js'
-import type { ListFlightsResponseRoundtripType, ListFlightsResponseOneWayType } from '../types/flights.js'
-import { getDayOfWeek, getFlightsOnDate } from '../helpers/date.js'
+import { getDayOfWeek } from '../helpers/date.js'
+import { routes, airports } from '../data/timetable.js'
+import type { RouteRecord, AirportInfo } from '../data/timetable.js'
+import type {
+  ListFlightsQueryParams,
+  ListFlightsResponseOneWayType,
+  ListFlightsResponseRoundtripType,
+} from '../types/flights.js'
 
 const MIN_CONNECTION_MINUTES = 30
 
-function normalizeBoolean(value: unknown): boolean {
-  if (typeof value === 'boolean') return value
-  if (value === 'True' || value === 'true') return true
-  if (value === 'False' || value === 'false') return false
-  return false
-}
-
-function normalizeFlight<T extends Record<string, unknown>>(obj: T): T {
-  const out: Record<string, unknown> = { ...obj }
-  if ('allow_callsign_change' in out) out.allow_callsign_change = normalizeBoolean(out.allow_callsign_change)
-  if ('is_hidden' in out) out.is_hidden = normalizeBoolean(out.is_hidden)
-  return out as T
-}
-
-function getArrivalDateTime(flight: Record<string, unknown>, date: Date): Date {
-  const depTime = flight.departure_time as string
-  const arrTime = flight.arrival_time as string
+function getArrivalDateTime(route: RouteRecord, date: Date): Date {
   const dep = new Date(date)
-  const [h, m] = depTime.split(':').map(Number)
-  dep.setHours(h, m, 0, 0)
+  const [h, m] = route.departure_time.split(':').map(Number)
+  dep.setUTCHours(h, m, 0, 0)
   const arr = new Date(date)
-  const [ah, am] = arrTime.split(':').map(Number)
-  arr.setHours(ah, am, 0, 0)
-  if (arr < dep) arr.setDate(arr.getDate() + 1) // crosses midnight
+  const [ah, am] = route.arrival_time.split(':').map(Number)
+  arr.setUTCHours(ah, am, 0, 0)
+  if (arr < dep) arr.setUTCDate(arr.getUTCDate() + 1)
   return arr
 }
 
-function getDepartureDateTime(flight: Record<string, unknown>, date: Date): Date {
-  const depTime = flight.departure_time as string
+function getDepartureDateTime(route: RouteRecord, date: Date): Date {
   const dep = new Date(date)
-  const [h, m] = depTime.split(':').map(Number)
-  dep.setHours(h, m, 0, 0)
+  const [h, m] = route.departure_time.split(':').map(Number)
+  dep.setUTCHours(h, m, 0, 0)
   return dep
 }
 
-/**
- * Expands raw Neo4j itinerary records into flight objects with origin/destination and dates.
- * Exported for unit tests.
- */
-export function expandFlights(records: { get: (key: string) => unknown }[], baseDate: string) {
-  const expanded: { itinerary: unknown[] }[] = []
-  for (const r of records) {
-    const itinerary = r.get('itinerary') as { properties: Record<string, unknown> }[]
-    if (!Array.isArray(itinerary)) continue
+const fallbackAirport = (icao: string): AirportInfo => ({
+  name: '',
+  icao,
+  iata: '',
+  city: '',
+  country: '',
+  countryCode: '',
+})
 
-    let serviceDays: string[]
-    let depAirport: Record<string, unknown>
-    let arrAirport: Record<string, unknown>
+function toFlightResult(route: RouteRecord, departureDate: string, airportMap: Map<string, AirportInfo>) {
+  return {
+    flightNumber: route.flightNumber,
+    callsign: route.callsign,
+    tags: route.tags,
+    type: route.type,
+    fleet_ids: route.fleet_ids,
+    pax_lf_id: route.pax_lf_id,
+    pax_luggage_lf_id: route.pax_luggage_lf_id,
+    cargo_lf_id: route.cargo_lf_id,
+    cargo_volume_lf_id: route.cargo_volume_lf_id,
+    is_hidden: route.is_hidden,
+    flight_rules: route.flight_rules,
+    flight_type: route.flight_type,
+    allow_callsign_change: route.allow_callsign_change,
+    departure_time: route.departure_time,
+    arrival_time: route.arrival_time,
+    departure_date: departureDate,
+    origin: airportMap.get(route.origin) ?? fallbackAirport(route.origin),
+    destination: airportMap.get(route.destination) ?? fallbackAirport(route.destination),
+    prices: { economy: 100, premium_economy: 300 },
+  }
+}
 
-    if (itinerary.length === 3) {
-      const [flight, dep, arr] = itinerary
-      const sd = flight?.properties?.service_days
-      if (typeof sd !== 'string') continue
-      serviceDays = sd.split(',')
-      depAirport = dep?.properties ?? {}
-      arrAirport = arr?.properties ?? {}
-    } else if (itinerary.length === 5) {
-      const [f1, f2, , dep, arr] = itinerary
-      const sd1 = f1?.properties?.service_days
-      const sd2 = f2?.properties?.service_days
-      if (typeof sd1 !== 'string' || typeof sd2 !== 'string') continue
-      const days1 = sd1.split(',')
-      const days2 = sd2.split(',')
-      serviceDays = days1.filter((d: string) => days2.includes(d))
+export function searchFlights(
+  origin: string,
+  destination: string,
+  date: string,
+  routeTable: RouteRecord[] = routes,
+  airportMap: Map<string, AirportInfo> = airports,
+) {
+  const day = getDayOfWeek(date)
+  const depDate = new Date(date)
 
-      const depDate = new Date(baseDate)
-      const arr1 = getArrivalDateTime(f1.properties, depDate)
-      const dep2 = getDepartureDateTime(f2.properties, depDate)
+  const direct = routeTable
+    .filter((r) => r.origin === origin && r.destination === destination && r.service_days.includes(day))
+    .map((r) => toFlightResult(r, date, airportMap))
+
+  const outLegs = routeTable.filter((r) => r.origin === origin && r.service_days.includes(day))
+  // No day filter here — leg 2 may operate on the next day if leg 1 is overnight
+  const connectingCandidates = routeTable.filter((r) => r.destination === destination)
+
+  const one_stop: ReturnType<typeof toFlightResult>[][] = []
+  for (const f1 of outLegs) {
+    const arr1 = getArrivalDateTime(f1, depDate)
+    const connectionDateStr = arr1.toISOString().slice(0, 10)
+    const connectionDay = getDayOfWeek(connectionDateStr)
+    const connectionDateBase = new Date(connectionDateStr)
+
+    for (const f2 of connectingCandidates) {
+      if (f1.destination !== f2.origin) continue
+      if (!f2.service_days.includes(connectionDay)) continue
+      const dep2 = getDepartureDateTime(f2, connectionDateBase)
       if (arr1 >= dep2) continue
       const connectionMinutes = (dep2.getTime() - arr1.getTime()) / (60 * 1000)
       if (connectionMinutes < MIN_CONNECTION_MINUTES) continue
-
-      depAirport = dep?.properties ?? {}
-      arrAirport = arr?.properties ?? {}
-    } else {
-      continue
-    }
-
-    const dates = getFlightsOnDate(baseDate, serviceDays)
-    for (const date of dates) {
-      if (itinerary.length === 3) {
-        const [flight] = itinerary
-        expanded.push({
-          itinerary: [
-            normalizeFlight({
-              ...flight.properties,
-              service_days: undefined,
-              origin: depAirport,
-              destination: arrAirport,
-              prices: { economy: 100, premium_economy: 300 },
-              departure_date: date,
-            }),
-          ],
-        })
-      } else {
-        const [f1, f2] = itinerary
-        const midProps = (itinerary[2] as { properties: Record<string, unknown> }).properties
-        expanded.push({
-          itinerary: [
-            normalizeFlight({
-              ...f1.properties,
-              service_days: undefined,
-              origin: depAirport,
-              destination: midProps,
-              prices: { economy: 100, premium_economy: 300 },
-              departure_date: date,
-            }),
-            normalizeFlight({
-              ...f2.properties,
-              service_days: undefined,
-              origin: midProps,
-              destination: arrAirport,
-              prices: { economy: 100, premium_economy: 300 },
-              departure_date: date,
-            }),
-          ],
-        })
-      }
+      one_stop.push([toFlightResult(f1, date, airportMap), toFlightResult(f2, connectionDateStr, airportMap)])
     }
   }
-  return expanded
-}
 
-export function buildFlightQuery(filters: Partial<ListFlightsQueryParams>) {
-  const whereDirect: string[] = []
-  const whereOneStop: string[] = []
-  const params: Record<string, unknown> = {}
-
-  const limit = Number(filters.limit) || 10
-  const offset = Number(filters.offset) || 0
-  params.limit = neo4j.int(limit)
-  params.offset = neo4j.int(offset)
-
-  if (filters.departure_airport) {
-    whereDirect.push('dep.icao = $departure_airport')
-    whereOneStop.push('dep.icao = $departure_airport')
-    params.departure_airport = filters.departure_airport
-  }
-
-  if (filters.arrival_airport) {
-    whereDirect.push('arr.icao = $arrival_airport')
-    whereOneStop.push('arr.icao = $arrival_airport')
-    params.arrival_airport = filters.arrival_airport
-  }
-
-  if (filters.departure_date) {
-    const day = getDayOfWeek(filters.departure_date)
-    whereDirect.push("$day IN split(f1.service_days, ',')")
-    whereOneStop.push("$day IN split(f1.service_days, ',') AND $day IN split(f2.service_days, ',')")
-    params.day = day
-  }
-
-  const directWhere = whereDirect.length ? `WHERE ${whereDirect.join(' AND ')}` : ''
-  const oneStopWhere = whereOneStop.length ? `WHERE ${whereOneStop.join(' AND ')}` : ''
-
-  const query = `
-    CALL {
-      MATCH (f1:Flight)-[:DEPARTS_FROM]->(dep:Airport)
-      MATCH (f1)-[:ARRIVES_TO]->(arr:Airport)
-      ${directWhere}
-      RETURN [f1, dep, arr] AS itinerary
-      UNION
-      MATCH (f1:Flight)-[:DEPARTS_FROM]->(dep:Airport)
-      MATCH (f1)-[:ARRIVES_TO]->(mid:Airport)
-      MATCH (f2:Flight)-[:DEPARTS_FROM]->(mid)
-      MATCH (f2)-[:ARRIVES_TO]->(arr:Airport)
-      ${oneStopWhere}
-      RETURN [f1, f2, mid, dep, arr] AS itinerary
-    }
-    RETURN itinerary
-    SKIP $offset LIMIT $limit
-  `
-
-  return { query, params }
+  return { direct, one_stop }
 }
 
 export type FlightsOneWayResult = ListFlightsResponseOneWayType
 export type FlightsRoundtripResult = ListFlightsResponseRoundtripType
 
-export async function getFlightsOneWay(
-  filters: ListFlightsQueryParams,
-  session: Session,
-): Promise<FlightsOneWayResult> {
-  const { query, params } = buildFlightQuery(filters)
-  const result = await session.run(query, params)
-  const expanded = expandFlights(result.records, filters.departure_date)
-  const direct = expanded.filter((r) => r.itinerary.length === 1)
-  const oneStop = expanded.filter((r) => r.itinerary.length === 2)
+export function getFlightsOneWay(filters: ListFlightsQueryParams): FlightsOneWayResult {
+  const result = searchFlights(filters.departure_airport, filters.arrival_airport, filters.departure_date)
   return {
     flights: {
-      direct: direct.flatMap((r) => r.itinerary) as FlightsOneWayResult['flights']['direct'],
-      one_stop: oneStop.map((r) => r.itinerary) as FlightsOneWayResult['flights']['one_stop'],
+      direct: result.direct as FlightsOneWayResult['flights']['direct'],
+      one_stop: result.one_stop as FlightsOneWayResult['flights']['one_stop'],
     },
   }
 }
 
-export async function getFlightsRoundtrip(
+export function getFlightsRoundtrip(
   outboundFilters: ListFlightsQueryParams,
-  returnFilters: { departure_airport: string; arrival_airport: string; departure_date: string; limit?: number; offset?: number },
-  session: Session,
-): Promise<FlightsRoundtripResult> {
-  const outbound = buildFlightQuery(outboundFilters)
-  const returnQ = buildFlightQuery(returnFilters)
-
-  // Same session cannot run concurrent transactions; run sequentially
-  const outboundResult = await session.run(outbound.query, outbound.params)
-  const returnResult = await session.run(returnQ.query, returnQ.params)
-
-  const outboundExpanded = expandFlights(outboundResult.records, outboundFilters.departure_date)
-  const returnExpanded = expandFlights(returnResult.records, returnFilters.departure_date)
-
-  const outboundDirect = outboundExpanded.filter((r) => r.itinerary.length === 1)
-  const outboundOneStop = outboundExpanded.filter((r) => r.itinerary.length === 2)
-  const returnDirect = returnExpanded.filter((r) => r.itinerary.length === 1)
-  const returnOneStop = returnExpanded.filter((r) => r.itinerary.length === 2)
-
+  returnFilters: { departure_airport: string; arrival_airport: string; departure_date: string },
+): FlightsRoundtripResult {
+  const outbound = searchFlights(
+    outboundFilters.departure_airport,
+    outboundFilters.arrival_airport,
+    outboundFilters.departure_date,
+  )
+  const ret = searchFlights(returnFilters.departure_airport, returnFilters.arrival_airport, returnFilters.departure_date)
   return {
     flights: {
       outbound: {
-        direct: outboundDirect.flatMap((r) => r.itinerary) as FlightsRoundtripResult['flights']['outbound']['direct'],
-        one_stop: outboundOneStop.map((r) => r.itinerary) as FlightsRoundtripResult['flights']['outbound']['one_stop'],
+        direct: outbound.direct as FlightsRoundtripResult['flights']['outbound']['direct'],
+        one_stop: outbound.one_stop as FlightsRoundtripResult['flights']['outbound']['one_stop'],
       },
       return: {
-        direct: returnDirect.flatMap((r) => r.itinerary) as FlightsRoundtripResult['flights']['return']['direct'],
-        one_stop: returnOneStop.map((r) => r.itinerary) as FlightsRoundtripResult['flights']['return']['one_stop'],
+        direct: ret.direct as FlightsRoundtripResult['flights']['return']['direct'],
+        one_stop: ret.one_stop as FlightsRoundtripResult['flights']['return']['one_stop'],
       },
     },
   }
